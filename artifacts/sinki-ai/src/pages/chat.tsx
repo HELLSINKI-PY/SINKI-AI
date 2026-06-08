@@ -13,7 +13,7 @@ import { id } from "date-fns/locale";
 import { 
   Menu, SquarePen, Search, Image as ImageIcon, 
   Mic, Send, ChevronDown, Check, Clock, Settings,
-  ThumbsUp, ThumbsDown, RotateCw, Copy, MoreHorizontal, Volume2, Star
+  ThumbsUp, ThumbsDown, RotateCw, Copy, Star
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -40,6 +40,8 @@ export default function ChatPage() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [messageReactions, setMessageReactions] = useState<Record<number, "liked" | "disliked" | null>>({});
+  const [copiedId, setCopiedId] = useState<number | null>(null);
 
   const { data: conversations = [] } = useListConversations();
   const { data: currentConversation } = useGetConversation(currentConversationId as number, { 
@@ -139,6 +141,68 @@ export default function ChatPage() {
       queryClient.invalidateQueries({ queryKey: getGetConversationQueryKey(convId!) });
     } catch (err) {
       console.error("Streaming error", err);
+    } finally {
+      setIsStreaming(false);
+      setStreamingContent("");
+    }
+  };
+
+  const handleCopy = async (msgId: number, content: string) => {
+    await navigator.clipboard.writeText(content);
+    setCopiedId(msgId);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const handleReaction = (msgId: number, reaction: "liked" | "disliked") => {
+    setMessageReactions(prev => ({
+      ...prev,
+      [msgId]: prev[msgId] === reaction ? null : reaction
+    }));
+  };
+
+  const handleRegenerate = async (msgIndex: number) => {
+    if (isStreaming || !currentConversationId) return;
+    // Find the user message before this assistant message
+    const prevUserMsg = messages.slice(0, msgIndex).reverse().find(m => m.role === "user");
+    if (!prevUserMsg) return;
+
+    setIsStreaming(true);
+    setStreamingContent("");
+
+    try {
+      const response = await fetch(`/api/conversations/${currentConversationId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: prevUserMsg.content, model }),
+      });
+
+      if (!response.body) throw new Error("No response body");
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let assistantContent = "";
+      let streamDone = false;
+
+      while (!streamDone) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        for (const line of chunk.split("\n")) {
+          if (line.startsWith("data: ")) {
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.content) {
+                assistantContent += data.content;
+                setStreamingContent(assistantContent);
+              }
+              if (data.done) { streamDone = true; break; }
+            } catch { /* skip */ }
+          }
+        }
+      }
+      queryClient.invalidateQueries({ queryKey: getGetConversationQueryKey(currentConversationId) });
+    } catch (err) {
+      console.error("Regenerate error", err);
     } finally {
       setIsStreaming(false);
       setStreamingContent("");
@@ -342,33 +406,44 @@ export default function ChatPage() {
                       <p className="text-[16px] leading-relaxed whitespace-pre-wrap">{msg.content}</p>
                     </div>
                   ) : (
-                    <div className="w-full flex gap-4">
-                      <div className="w-8 h-8 rounded-full shrink-0 flex items-center justify-center mt-1">
-                        <Star className="w-6 h-6 text-transparent fill-current" 
+                    <div className="w-full flex gap-3 items-start">
+                      <div className="w-7 h-7 rounded-full shrink-0 flex items-center justify-center mt-0.5">
+                        <Star className="w-5 h-5 text-transparent fill-current" 
                               style={{ fill: 'url(#gemini-gradient)' }} />
                       </div>
-                      <div className="flex-1">
-                        <div className="text-[16px] leading-relaxed whitespace-pre-wrap prose prose-invert max-w-none">
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[15px] leading-relaxed whitespace-pre-wrap break-words">
                           {msg.content}
                         </div>
-                        <div className="flex items-center gap-2 mt-4 text-gray-400">
-                          <Button variant="ghost" size="icon" className="w-8 h-8 rounded-full hover:bg-white/10 hover:text-white">
-                            <Volume2 className="w-4 h-4" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="w-8 h-8 rounded-full hover:bg-white/10 hover:text-white">
+                        <div className="flex items-center gap-1 mt-3">
+                          <Button
+                            variant="ghost" size="icon"
+                            className={`w-8 h-8 rounded-full hover:bg-white/10 transition-colors ${messageReactions[msg.id] === "liked" ? "text-blue-400" : "text-gray-400 hover:text-white"}`}
+                            onClick={() => handleReaction(msg.id, "liked")}
+                          >
                             <ThumbsUp className="w-4 h-4" />
                           </Button>
-                          <Button variant="ghost" size="icon" className="w-8 h-8 rounded-full hover:bg-white/10 hover:text-white">
+                          <Button
+                            variant="ghost" size="icon"
+                            className={`w-8 h-8 rounded-full hover:bg-white/10 transition-colors ${messageReactions[msg.id] === "disliked" ? "text-red-400" : "text-gray-400 hover:text-white"}`}
+                            onClick={() => handleReaction(msg.id, "disliked")}
+                          >
                             <ThumbsDown className="w-4 h-4" />
                           </Button>
-                          <Button variant="ghost" size="icon" className="w-8 h-8 rounded-full hover:bg-white/10 hover:text-white">
+                          <Button
+                            variant="ghost" size="icon"
+                            className="w-8 h-8 rounded-full hover:bg-white/10 text-gray-400 hover:text-white transition-colors disabled:opacity-40"
+                            disabled={isStreaming}
+                            onClick={() => handleRegenerate(i)}
+                          >
                             <RotateCw className="w-4 h-4" />
                           </Button>
-                          <Button variant="ghost" size="icon" className="w-8 h-8 rounded-full hover:bg-white/10 hover:text-white">
+                          <Button
+                            variant="ghost" size="icon"
+                            className={`w-8 h-8 rounded-full hover:bg-white/10 transition-colors ${copiedId === msg.id ? "text-green-400" : "text-gray-400 hover:text-white"}`}
+                            onClick={() => handleCopy(msg.id, msg.content)}
+                          >
                             <Copy className="w-4 h-4" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="w-8 h-8 rounded-full hover:bg-white/10 hover:text-white">
-                            <MoreHorizontal className="w-4 h-4" />
                           </Button>
                         </div>
                       </div>

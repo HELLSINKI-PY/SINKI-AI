@@ -11,18 +11,18 @@ import {
 import { format, isToday, isYesterday } from "date-fns";
 import { id } from "date-fns/locale";
 import { 
-  Menu, SquarePen, Search, Image as ImageIcon, 
-  Mic, Send, ChevronDown, Check, Clock, Settings,
-  ThumbsUp, ThumbsDown, RotateCw, Copy, Star
+  Menu, SquarePen, Search,
+  Mic, Send, ChevronDown, Check, Settings,
+  ThumbsUp, ThumbsDown, RotateCw, Copy, Star,
+  Trash2, Share2, Pin, Pencil, LogOut
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Drawer, DrawerContent, DrawerTrigger, DrawerClose } from "@/components/ui/drawer";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
+import { useAuth } from "@/context/auth";
 
 type Message = {
   id: number;
@@ -31,6 +31,7 @@ type Message = {
 };
 
 export default function ChatPage() {
+  const { user, logout } = useAuth();
   const queryClient = useQueryClient();
   const [currentConversationId, setCurrentConversationId] = useState<number | null>(null);
   const [model, setModel] = useState<"gpt" | "wormgpt">("gpt");
@@ -42,6 +43,8 @@ export default function ChatPage() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [messageReactions, setMessageReactions] = useState<Record<number, "liked" | "disliked" | null>>({});
   const [copiedId, setCopiedId] = useState<number | null>(null);
+  const [convMenuId, setConvMenuId] = useState<number | null>(null);
+  const [convMenuOpen, setConvMenuOpen] = useState(false);
 
   const { data: conversations = [] } = useListConversations();
   const { data: currentConversation } = useGetConversation(currentConversationId as number, { 
@@ -305,29 +308,44 @@ export default function ChatPage() {
                 <div className="mt-6">
                   <div className="px-3 py-2 text-xs font-medium text-gray-500">Terbaru</div>
                   <div className="space-y-1">
-                    {conversations.slice(0, 10).map(conv => (
-                      <button
-                        key={conv.id}
-                        className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-white/5 rounded-xl text-left"
-                        onClick={() => {
-                          setCurrentConversationId(conv.id);
-                          setIsSidebarOpen(false);
-                        }}
-                      >
-                        <span className="truncate pr-2 text-[15px]">{conv.title}</span>
-                      </button>
+                    {conversations.slice(0, 20).map(conv => (
+                      <div key={conv.id} className="relative group flex items-center">
+                        <button
+                          className={`flex-1 flex items-center px-3 py-2.5 hover:bg-white/5 rounded-xl text-left min-w-0 ${currentConversationId === conv.id ? "bg-white/10" : ""}`}
+                          onClick={() => {
+                            setCurrentConversationId(conv.id);
+                            setIsSidebarOpen(false);
+                          }}
+                        >
+                          <span className="truncate text-[15px] pr-2">{conv.title}</span>
+                        </button>
+                        <button
+                          className="shrink-0 w-8 h-8 flex items-center justify-center rounded-lg text-gray-500 hover:text-white hover:bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity mr-1"
+                          onClick={() => {
+                            setConvMenuId(conv.id);
+                            setConvMenuOpen(true);
+                          }}
+                        >
+                          <span className="text-lg leading-none">···</span>
+                        </button>
+                      </div>
                     ))}
                   </div>
                 </div>
               </ScrollArea>
               
               <div className="p-3 mb-2">
-                <button className="w-full flex items-center gap-3 px-3 py-3 hover:bg-white/5 rounded-2xl transition-colors">
+                <button
+                  className="w-full flex items-center gap-3 px-3 py-3 hover:bg-white/5 rounded-2xl transition-colors"
+                  onClick={logout}
+                >
                   <Avatar className="w-8 h-8">
-                    <AvatarFallback className="bg-blue-600 text-white">R</AvatarFallback>
+                    <AvatarFallback className="bg-gradient-to-br from-blue-500 to-purple-600 text-white text-sm font-semibold">
+                      {(user?.name || user?.email || "U").charAt(0).toUpperCase()}
+                    </AvatarFallback>
                   </Avatar>
-                  <span className="text-[15px] font-medium flex-1 text-left">rafa Rama</span>
-                  <Settings className="w-5 h-5 text-gray-400" />
+                  <span className="text-[14px] font-medium flex-1 text-left truncate">{user?.name || user?.email}</span>
+                  <LogOut className="w-4 h-4 text-gray-400 shrink-0" />
                 </button>
               </div>
             </SheetContent>
@@ -535,6 +553,49 @@ export default function ChatPage() {
           </div>
         </div>
       </div>
+
+      {/* Conversation Options Bottom Sheet */}
+      {convMenuOpen && (
+        <div className="fixed inset-0 z-50 flex flex-col justify-end" onClick={() => setConvMenuOpen(false)}>
+          <div className="absolute inset-0 bg-black/50" />
+          <div
+            className="relative bg-[#1c1c1e] rounded-t-3xl pb-8 pt-2 px-2"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="w-10 h-1 bg-gray-600 rounded-full mx-auto mb-4" />
+            <div className="space-y-1">
+              <button className="w-full flex items-center gap-4 px-5 py-4 hover:bg-white/5 rounded-2xl text-left transition-colors">
+                <Share2 className="w-5 h-5 text-gray-300 shrink-0" />
+                <span className="text-[16px]">Bagikan percakapan</span>
+              </button>
+              <button className="w-full flex items-center gap-4 px-5 py-4 hover:bg-white/5 rounded-2xl text-left transition-colors">
+                <Pin className="w-5 h-5 text-gray-300 shrink-0" />
+                <span className="text-[16px]">Sematkan</span>
+              </button>
+              <button className="w-full flex items-center gap-4 px-5 py-4 hover:bg-white/5 rounded-2xl text-left transition-colors">
+                <Pencil className="w-5 h-5 text-gray-300 shrink-0" />
+                <span className="text-[16px]">Ganti nama</span>
+              </button>
+              <button
+                className="w-full flex items-center gap-4 px-5 py-4 hover:bg-white/5 rounded-2xl text-left transition-colors"
+                onClick={async () => {
+                  if (!convMenuId) return;
+                  try {
+                    await deleteConversation.mutateAsync({ id: convMenuId });
+                    if (currentConversationId === convMenuId) setCurrentConversationId(null);
+                    queryClient.invalidateQueries({ queryKey: getListConversationsQueryKey() });
+                  } catch (e) { /* ignore */ }
+                  setConvMenuOpen(false);
+                  setConvMenuId(null);
+                }}
+              >
+                <Trash2 className="w-5 h-5 text-red-400 shrink-0" />
+                <span className="text-[16px] text-red-400">Hapus</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,5 +1,5 @@
-import { Router, type IRouter } from "express";
-import { eq, desc } from "drizzle-orm";
+import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
+import { eq, desc, and } from "drizzle-orm";
 import { db, conversationsTable, messagesTable } from "@workspace/db";
 import {
   CreateConversationBody,
@@ -12,15 +12,24 @@ import { logger } from "../../lib/logger";
 
 const router: IRouter = Router();
 
-router.get("/conversations", async (_req, res): Promise<void> => {
+function requireAuth(req: Request, res: Response, next: NextFunction): void {
+  if (!req.session.userId) {
+    res.status(401).json({ error: "Belum login" });
+    return;
+  }
+  next();
+}
+
+router.get("/conversations", requireAuth, async (req, res): Promise<void> => {
   const conversations = await db
     .select()
     .from(conversationsTable)
+    .where(eq(conversationsTable.userId, req.session.userId!))
     .orderBy(desc(conversationsTable.updatedAt));
   res.json(conversations);
 });
 
-router.post("/conversations", async (req, res): Promise<void> => {
+router.post("/conversations", requireAuth, async (req, res): Promise<void> => {
   const parsed = CreateConversationBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
@@ -29,13 +38,13 @@ router.post("/conversations", async (req, res): Promise<void> => {
 
   const [conversation] = await db
     .insert(conversationsTable)
-    .values({ title: parsed.data.title, model: parsed.data.model })
+    .values({ title: parsed.data.title, model: parsed.data.model, userId: req.session.userId! })
     .returning();
 
   res.status(201).json(conversation);
 });
 
-router.get("/conversations/:id", async (req, res): Promise<void> => {
+router.get("/conversations/:id", requireAuth, async (req, res): Promise<void> => {
   const params = GetConversationParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: params.error.message });
@@ -45,7 +54,7 @@ router.get("/conversations/:id", async (req, res): Promise<void> => {
   const [conversation] = await db
     .select()
     .from(conversationsTable)
-    .where(eq(conversationsTable.id, params.data.id));
+    .where(and(eq(conversationsTable.id, params.data.id), eq(conversationsTable.userId, req.session.userId!)));
 
   if (!conversation) {
     res.status(404).json({ error: "Conversation not found" });
@@ -61,7 +70,7 @@ router.get("/conversations/:id", async (req, res): Promise<void> => {
   res.json({ ...conversation, messages: msgs });
 });
 
-router.delete("/conversations/:id", async (req, res): Promise<void> => {
+router.delete("/conversations/:id", requireAuth, async (req, res): Promise<void> => {
   const params = DeleteConversationParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: params.error.message });
@@ -70,7 +79,7 @@ router.delete("/conversations/:id", async (req, res): Promise<void> => {
 
   const [deleted] = await db
     .delete(conversationsTable)
-    .where(eq(conversationsTable.id, params.data.id))
+    .where(and(eq(conversationsTable.id, params.data.id), eq(conversationsTable.userId, req.session.userId!)))
     .returning();
 
   if (!deleted) {
@@ -81,7 +90,7 @@ router.delete("/conversations/:id", async (req, res): Promise<void> => {
   res.sendStatus(204);
 });
 
-router.post("/conversations/:id/messages", async (req, res): Promise<void> => {
+router.post("/conversations/:id/messages", requireAuth, async (req, res): Promise<void> => {
   const params = SendMessageParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: params.error.message });
@@ -97,27 +106,24 @@ router.post("/conversations/:id/messages", async (req, res): Promise<void> => {
   const [conversation] = await db
     .select()
     .from(conversationsTable)
-    .where(eq(conversationsTable.id, params.data.id));
+    .where(and(eq(conversationsTable.id, params.data.id), eq(conversationsTable.userId, req.session.userId!)));
 
   if (!conversation) {
     res.status(404).json({ error: "Conversation not found" });
     return;
   }
 
-  // Save user message
   await db.insert(messagesTable).values({
     conversationId: params.data.id,
     role: "user",
     content: body.data.content,
   });
 
-  // Update conversation updatedAt
   await db
     .update(conversationsTable)
     .set({ updatedAt: new Date(), model: body.data.model })
     .where(eq(conversationsTable.id, params.data.id));
 
-  // Set up SSE
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
@@ -129,29 +135,23 @@ router.post("/conversations/:id/messages", async (req, res): Promise<void> => {
 
   try {
     if (model === "wormgpt") {
-      // WormGPT API — response is at data.result.response
       const apiUrl = `https://api-nanzz.my.id/docs/api/ai/worm-gpt.php?prompt=${encodeURIComponent(userContent)}`;
       const apiRes = await fetch(apiUrl, { signal: AbortSignal.timeout(60000) });
       const data = await apiRes.json() as { result?: { response?: string; success?: boolean }; [key: string]: unknown };
-      
       fullResponse = data?.result?.response || "Maaf, tidak ada respons dari WormGPT.";
     } else {
-      // GPT API — response is at data.result.text
       const apiUrl = `https://api-nanzz.my.id/docs/api/ai/chat-gpt.php?text=${encodeURIComponent(userContent)}&model=chatgpt`;
       const apiRes = await fetch(apiUrl, { signal: AbortSignal.timeout(60000) });
       const data = await apiRes.json() as { result?: { text?: string; model?: string }; [key: string]: unknown };
-      
       fullResponse = data?.result?.text || "Maaf, tidak ada respons dari GPT.";
     }
 
-    // Stream word by word for realistic typing effect
     const words = fullResponse.split(" ");
     for (const word of words) {
       res.write(`data: ${JSON.stringify({ content: word + " " })}\n\n`);
       await new Promise(r => setTimeout(r, 25));
     }
 
-    // Save assistant message
     await db.insert(messagesTable).values({
       conversationId: params.data.id,
       role: "assistant",
@@ -164,7 +164,7 @@ router.post("/conversations/:id/messages", async (req, res): Promise<void> => {
     logger.error({ err }, "Error calling AI API");
     const errMsg = "Maaf, terjadi kesalahan saat menghubungi AI. Silakan coba lagi.";
     res.write(`data: ${JSON.stringify({ content: errMsg })}\n\n`);
-    
+
     await db.insert(messagesTable).values({
       conversationId: params.data.id,
       role: "assistant",

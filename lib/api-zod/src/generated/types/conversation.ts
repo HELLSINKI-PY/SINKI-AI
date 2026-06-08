@@ -6,6 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export interface HealthStatus {
-  status: string;
+export interface Conversation {
+  id: number;
+  title: string;
+  model: string;
+  createdAt: Date;
+  updatedAt: Date;
 }

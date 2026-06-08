@@ -129,42 +129,26 @@ router.post("/conversations/:id/messages", async (req, res): Promise<void> => {
 
   try {
     if (model === "wormgpt") {
-      // WormGPT API
+      // WormGPT API — response is at data.result.response
       const apiUrl = `https://api-nanzz.my.id/docs/api/ai/worm-gpt.php?prompt=${encodeURIComponent(userContent)}`;
-      const apiRes = await fetch(apiUrl);
-      const data = await apiRes.json() as { reply?: string; response?: string; result?: string; message?: string; [key: string]: unknown };
+      const apiRes = await fetch(apiUrl, { signal: AbortSignal.timeout(60000) });
+      const data = await apiRes.json() as { result?: { response?: string; success?: boolean }; [key: string]: unknown };
       
-      // Try common response fields
-      const text = data.reply || data.response || data.result || data.message || 
-        (typeof data === "object" ? Object.values(data).find(v => typeof v === "string") as string : "") || 
-        "Maaf, tidak ada respons.";
-      
-      fullResponse = String(text);
-      
-      // Stream word by word for realistic effect
-      const words = fullResponse.split(" ");
-      for (const word of words) {
-        res.write(`data: ${JSON.stringify({ content: word + " " })}\n\n`);
-        await new Promise(r => setTimeout(r, 30));
-      }
+      fullResponse = data?.result?.response || "Maaf, tidak ada respons dari WormGPT.";
     } else {
-      // GPT API
+      // GPT API — response is at data.result.text
       const apiUrl = `https://api-nanzz.my.id/docs/api/ai/chat-gpt.php?text=${encodeURIComponent(userContent)}&model=chatgpt`;
-      const apiRes = await fetch(apiUrl);
-      const data = await apiRes.json() as { reply?: string; response?: string; result?: string; message?: string; answer?: string; [key: string]: unknown };
+      const apiRes = await fetch(apiUrl, { signal: AbortSignal.timeout(60000) });
+      const data = await apiRes.json() as { result?: { text?: string; model?: string }; [key: string]: unknown };
       
-      const text = data.reply || data.response || data.result || data.message || data.answer ||
-        (typeof data === "object" ? Object.values(data).find(v => typeof v === "string") as string : "") ||
-        "Maaf, tidak ada respons.";
-      
-      fullResponse = String(text);
-      
-      // Stream word by word for realistic effect
-      const words = fullResponse.split(" ");
-      for (const word of words) {
-        res.write(`data: ${JSON.stringify({ content: word + " " })}\n\n`);
-        await new Promise(r => setTimeout(r, 30));
-      }
+      fullResponse = data?.result?.text || "Maaf, tidak ada respons dari GPT.";
+    }
+
+    // Stream word by word for realistic typing effect
+    const words = fullResponse.split(" ");
+    for (const word of words) {
+      res.write(`data: ${JSON.stringify({ content: word + " " })}\n\n`);
+      await new Promise(r => setTimeout(r, 25));
     }
 
     // Save assistant message

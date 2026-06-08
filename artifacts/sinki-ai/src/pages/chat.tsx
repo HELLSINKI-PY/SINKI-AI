@@ -109,20 +109,28 @@ export default function ChatPage() {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let assistantContent = "";
+      let streamDone = false;
 
-      while (true) {
+      while (!streamDone) {
         const { done, value } = await reader.read();
         if (done) break;
-        const chunk = decoder.decode(value);
+        const chunk = decoder.decode(value, { stream: true });
         const lines = chunk.split("\n");
         for (const line of lines) {
           if (line.startsWith("data: ")) {
-            const data = JSON.parse(line.slice(6));
-            if (data.content) {
-              assistantContent += data.content;
-              setStreamingContent(assistantContent);
+            try {
+              const data = JSON.parse(line.slice(6));
+              if (data.content) {
+                assistantContent += data.content;
+                setStreamingContent(assistantContent);
+              }
+              if (data.done) {
+                streamDone = true;
+                break;
+              }
+            } catch {
+              // skip malformed SSE lines
             }
-            if (data.done) break;
           }
         }
       }
@@ -368,6 +376,21 @@ export default function ChatPage() {
                   )}
                 </div>
               ))}
+              {isStreaming && !streamingContent && (
+                <div className="flex flex-col items-start">
+                  <div className="w-full flex gap-4">
+                    <div className="w-8 h-8 rounded-full shrink-0 flex items-center justify-center mt-1">
+                      <Star className="w-6 h-6 text-transparent fill-current animate-pulse"
+                            style={{ fill: 'url(#gemini-gradient)' }} />
+                    </div>
+                    <div className="flex-1 flex items-center gap-1 pt-2">
+                      <span className="w-2 h-2 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: "0ms" }} />
+                      <span className="w-2 h-2 rounded-full bg-purple-400 animate-bounce" style={{ animationDelay: "150ms" }} />
+                      <span className="w-2 h-2 rounded-full bg-pink-400 animate-bounce" style={{ animationDelay: "300ms" }} />
+                    </div>
+                  </div>
+                </div>
+              )}
               {streamingContent && (
                 <div className="flex flex-col items-start">
                   <div className="w-full flex gap-4">
